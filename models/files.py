@@ -180,3 +180,108 @@ class udd_file:
     def get_number_of_samples(self, channel):
         count_samples = int(self.file.value(f"Points/{channel}/count"))
         return count_samples
+
+
+class udb_file:
+
+    """
+    Бинарный файл со следующей структурой:
+
+    1-4 байты - версия файла
+    5-16 байты - дата и время создания файла
+    17-21 байты - количество каналов
+
+    Уникальные данные каждого канала (начало и конец включительно):
+    1-4 байты - кол-во отсчетов
+    5-8 байты - номер канала
+    9-16 байты - имя канала и сокращенное имя
+    17-24 байты - чувствительность канала
+    25-32 байты - частота дискретизации
+    33-40 байты - размер сжатых с помощью qCompress данных
+    41-... байты - сжатые данные сигнала
+
+    Данные о каждом канале расположены последовательно
+
+    """
+
+    def __init__(self, filename):
+        with open(filename, mode='rb') as f:
+            self.file = bytearray(f.read())
+            f.close()
+
+        # в массив channels_pos сохраняются начальные позиции каждого канала
+        # начальная позиция канала - место, откуда начинаются его уникальные данные
+        # в случае с udb файлом, уникальные данные начинаются с количества отсчетов канала
+        self.channels_pos = []
+        self.count_channels = struct.unpack(">i", self.file[17:21])[0]
+        start_pos = 21  # начальная позиция 0 канала
+
+        # добавление начальных позиций каналов в массив
+        for i in range(self.count_channels):
+            self.channels_pos.append(start_pos)
+            pos_data = start_pos + 32  # начало байтов размера сжатых данных
+            size_data = struct.unpack(">i", self.file[pos_data:pos_data + 4])[0]  # размер сжатых данных - 4 байтовое число
+            start_pos = pos_data + size_data + 4  # получение нач. позиции следующего канала с учетом размера сжатых данных и размера переменной size_data
+
+    def get_signal_time(self, channel):
+        """ Возвращает массив с временем, в которое брались отсчеты """
+        number_samples = self.get_number_of_samples(channel)
+        sampling_frequency = self.get_sampling_frequency(channel)
+        sampling_step = 1 / sampling_frequency
+        time = []
+        for j in range(0, number_samples):
+            time.append(j * sampling_step)
+        return np.array(time)
+
+    def get_signal(self, channel):
+        channel_pos = self.channels_pos[channel]  # начальная позиция канала
+
+        # получение размера сжатых данных
+        # с 32 по 36 байты от начальной позиции расположен рзамер сжатых данных
+        channel_data_size = struct.unpack(">i", self.file[channel_pos + 32: channel_pos + 36])[0]
+        count_samples = self.get_number_of_samples(channel)
+
+        # сжатые данные расположение с 36 по 36+размер сжатых данных байты от нач. позиции
+        data_start, data_stop = channel_pos + 36, channel_pos + channel_data_size + 36
+
+        # распаковка с помощью qUncompress
+        channel_data_bytes = bytearray(qUncompress((self.file[data_start:data_stop])))
+
+        # размер в байтах одного числа отсчета
+        step = len(channel_data_bytes) // count_samples
+        data_array = []
+
+        # цикл, в котором каждые step байт распакованных данных преобразуются в double и добавляются в массив
+        for i in range(0, len(channel_data_bytes), step):
+            signal_value_bytes = channel_data_bytes[i: i + step]
+            signal_value = struct.unpack(">d", signal_value_bytes)[0]
+            data_array.append(signal_value)
+        return np.array(data_array)
+
+    def get_count_channels(self):
+        """ Возвращает число каналов в файле """
+        return self.count_channels
+
+    def get_channel_name(self, channel):
+        """ Получение имени канала """
+        return f"{channel}"
+
+    def get_sampling_frequency(self, channel):
+        """ Получение частоты дискретизации указанного канала """
+        channel_pos = self.channels_pos[channel]  # начальная позиция для канала channel
+
+        # с 24 по 32 байты от начальной позиции находится частота дискретизации
+        dt_pos_start, dt_pos_stop = channel_pos + 24, channel_pos + 32
+
+        # преобразование из байт в double с порядком big-endian
+        sampling_frequency = struct.unpack(">d", self.file[dt_pos_start:dt_pos_stop])[0]
+        return sampling_frequency
+
+    def get_number_of_samples(self, channel):
+        """ Получение числа отсчетов указанного канала """
+        channel_pos = self.channels_pos[channel]  # начальная позиция канала
+        dt_pos_start, dt_pos_stop = channel_pos, channel_pos + 4  # первые 4 байта от начала - число отсчетов
+
+        # преобразование из байт в int с порядком big-endian
+        number_samples = struct.unpack(">i", self.file[dt_pos_start:dt_pos_stop])[0]
+        return number_samples

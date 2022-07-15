@@ -39,7 +39,7 @@ class MainWindow(QMainWindow):
         file_path = QFileDialog.getOpenFileName(
             self,
             caption="Open File",
-            filter="Signal Files (*.dd *.d2 *.d3 *.udd)"
+            filter="Signal Files (*.dd *.d2 *.d3 *.udd *.udb)"
         )[0]
         if file_path:
             self.ui.menu_tools.setEnabled(False)
@@ -61,6 +61,8 @@ class MainWindow(QMainWindow):
                 self.file = d3_file(file_path)
             elif ".udd" == file_suffix:
                 self.file = udd_file(file_path)
+            elif ".udb" == file_suffix:
+                self.file = udb_file(file_path)
             else:
                 return 0
             self.setWindowTitle(file_path)
@@ -77,6 +79,8 @@ class MainWindow(QMainWindow):
                 channel_with_index_0 = 0
             if self.file.version_file1:
                 channel_with_index_0 = 1
+        elif type(self.file) == udb_file:
+            channel_with_index_0 = 1
         else:
             channel_with_index_0 = 0
 
